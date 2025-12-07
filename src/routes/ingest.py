@@ -4,127 +4,133 @@ Ingest routes for HealthKit MCP.
 Handles incoming workout data from iOS Shortcuts.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import os
-import json
 
-router = APIRouter(prefix="/ingest", tags=["ingest"])
+from .storage import workout_storage
 
-# In-memory storage (will reset on restart)
-workouts_store: List[dict] = []
+# No prefix here - main.py adds /ingest prefix when including this router
+router = APIRouter(tags=["ingest"])
 
-# Optional file persistence
-PERSISTENCE_FILE = "/tmp/workouts.json"
-
-
-def load_workouts():
-    """Load workouts from persistence file if it exists."""
-    global workouts_store
-    if os.path.exists(PERSISTENCE_FILE):
-        try:
-            with open(PERSISTENCE_FILE, "r") as f:
-                workouts_store = json.load(f)
-        except Exception:
-            workouts_store = []
-
-
-def save_workouts():
-    """Save workouts to persistence file."""
-    try:
-        with open(PERSISTENCE_FILE, "w") as f:
-            json.dump(workouts_store, f)
-    except Exception:
-        pass
-
-
-# Load existing workouts on module import
-load_workouts()
+DEFAULT_TIMEZONE = "America/Los_Angeles"
 
 
 class WorkoutData(BaseModel):
-    """Schema for incoming workout data from iOS Shortcuts."""
-    workout_type: str = Field(..., description="Type of workout (e.g., Running, Cycling, Yoga)")
-    start_date: str = Field(..., description="ISO 8601 start datetime")
-    end_date: str = Field(..., description="ISO 8601 end datetime")
-    duration_minutes: float = Field(..., description="Duration in minutes")
+    """Workout data model matching iOS Shortcuts output."""
+    type: str = Field(..., description="Workout type (e.g., 'Functional Training', 'Golf', 'Yoga')")
+    start: str = Field(..., description="Start time in ISO format")
+    end: Optional[str] = Field(None, description="End time in ISO format")
+    duration_minutes: Optional[float] = Field(None, description="Duration in minutes")
     calories: Optional[float] = Field(None, description="Active calories burned")
-    distance_miles: Optional[float] = Field(None, description="Distance in miles (if applicable)")
-    heart_rate_avg: Optional[int] = Field(None, description="Average heart rate")
-    heart_rate_max: Optional[int] = Field(None, description="Maximum heart rate")
-    source: str = Field(default="Apple Watch", description="Data source device")
+    distance_km: Optional[float] = Field(None, description="Distance in kilometers")
+    avg_heart_rate: Optional[int] = Field(None, description="Average heart rate")
+    source: Optional[str] = Field("Apple Health", description="Data source")
 
 
-async def verify_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
+class WorkoutBatch(BaseModel):
+    """Batch of workouts for bulk ingestion."""
+    workouts: List[WorkoutData]
+
+
+def get_api_key():
+    """Get API key from environment."""
+    return os.getenv("HEALTHKIT_API_KEY", "")
+
+
+def verify_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
     """Verify the API key from request header."""
-    expected_key = os.getenv("HEALTHKIT_API_KEY")
+    expected_key = get_api_key()
     if not expected_key:
-        raise HTTPException(status_code=500, detail="API key not configured")
+        # No key configured = allow all (dev mode)
+        return True
     if x_api_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
     return True
 
 
 @router.post("/workout")
-async def ingest_workout(workout: WorkoutData, authorized: bool = Depends(verify_api_key)):
+async def ingest_workout(workout: WorkoutData, x_api_key: str = Header(None, alias="X-API-Key")):
     """
     Ingest a single workout from iOS Shortcuts.
     
-    Requires X-API-Key header for authentication.
+    Requires X-API-Key header if HEALTHKIT_API_KEY is configured.
     """
-    workout_record = {
-        "id": len(workouts_store) + 1,
-        "ingested_at": datetime.utcnow().isoformat() + "Z",
-        **workout.model_dump()
-    }
+    # Check API key if configured
+    expected_key = get_api_key()
+    if expected_key and x_api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
     
-    workouts_store.append(workout_record)
-    save_workouts()
+    workout_dict = workout.model_dump()
+    workout_dict["ingested_at"] = datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).isoformat()
+    
+    is_new = workout_storage.add_workout(workout_dict)
     
     return {
-        "status": "success",
-        "message": f"Workout '{workout.workout_type}' ingested successfully",
-        "workout_id": workout_record["id"]
+        "status": "ok",
+        "message": "Workout ingested" if is_new else "Workout updated (duplicate)",
+        "workout_type": workout.type,
+        "start": workout.start,
+        "is_new": is_new
     }
 
 
-@router.get("/workouts")
-async def get_workouts(
-    limit: int = 10,
-    workout_type: Optional[str] = None,
-    authorized: bool = Depends(verify_api_key)
-):
+@router.post("/workouts")
+async def ingest_workouts_batch(batch: WorkoutBatch, x_api_key: str = Header(None, alias="X-API-Key")):
     """
-    Retrieve ingested workouts.
+    Ingest multiple workouts at once.
     
-    Optionally filter by workout_type and limit results.
+    Useful for syncing historical data or batch uploads from iOS Shortcuts.
     """
-    results = workouts_store
+    expected_key = get_api_key()
+    if expected_key and x_api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
     
-    if workout_type:
-        results = [w for w in results if w.get("workout_type", "").lower() == workout_type.lower()]
+    results = []
+    new_count = 0
     
-    # Return most recent first
-    results = sorted(results, key=lambda x: x.get("ingested_at", ""), reverse=True)
+    for workout in batch.workouts:
+        workout_dict = workout.model_dump()
+        workout_dict["ingested_at"] = datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).isoformat()
+        
+        is_new = workout_storage.add_workout(workout_dict)
+        if is_new:
+            new_count += 1
+        
+        results.append({
+            "type": workout.type,
+            "start": workout.start,
+            "is_new": is_new
+        })
     
     return {
-        "count": len(results[:limit]),
-        "total": len(workouts_store),
-        "workouts": results[:limit]
+        "status": "ok",
+        "message": f"Processed {len(results)} workouts ({new_count} new)",
+        "total": len(results),
+        "new": new_count,
+        "updated": len(results) - new_count,
+        "results": results
     }
 
 
 @router.delete("/workouts")
-async def clear_workouts(authorized: bool = Depends(verify_api_key)):
-    """Clear all stored workouts. Use with caution."""
-    global workouts_store
-    count = len(workouts_store)
-    workouts_store = []
-    save_workouts()
+async def clear_workouts(x_api_key: str = Header(None, alias="X-API-Key")):
+    """
+    Clear all stored workouts.
+    
+    Use with caution - this deletes all workout data.
+    """
+    expected_key = get_api_key()
+    if expected_key and x_api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    
+    count = workout_storage.clear()
     
     return {
-        "status": "success",
-        "message": f"Cleared {count} workouts"
+        "status": "ok",
+        "message": f"Cleared {count} workouts",
+        "cleared": count
     }
