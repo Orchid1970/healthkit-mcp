@@ -1,1 +1,1 @@
-"""Routes package for HealthKit MCP"""\n
+"""Routes package for healthkit-mcp."""
