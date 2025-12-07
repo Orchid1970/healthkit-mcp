@@ -1,1 +1,111 @@
-"""\nMCP Protocol Routes - Simtheory.ai Integration\n\nImplements the MCP protocol for Simtheory.ai to query workout data.\nThis is a simplified REST-based MCP implementation.\n"""\n\nfrom fastapi import APIRouter\nfrom datetime import datetime\nfrom zoneinfo import ZoneInfo\n\nfrom .storage import workout_storage\n\nrouter = APIRouter()\n\nDEFAULT_TIMEZONE = "America/Los_Angeles"\n\n\n@router.get("")\n@router.get("/")\nasync def mcp_root():\n    """\n    MCP service discovery endpoint.\n    Returns available tools/capabilities.\n    """\n    return {\n        "name": "healthkit-mcp",\n        "version": "1.0.0",\n        "description": "Apple HealthKit workout data from Timothy's iPhone/Apple Watch",\n        "tools": [\n            {\n                "name": "get_workouts",\n                "description": "Get workouts from the last N days, optionally filtered by type",\n                "parameters": {\n                    "days": {"type": "integer", "default": 7},\n                    "workout_type": {"type": "string", "optional": True}\n                }\n            },\n            {\n                "name": "get_todays_workouts",\n                "description": "Get all workouts logged today (Pacific time)",\n                "parameters": {}\n            },\n            {\n                "name": "get_workout_summary",\n                "description": "Get workout statistics and summary for N days",\n                "parameters": {\n                    "days": {"type": "integer", "default": 7}\n                }\n            }\n        ],\n        "supported_workout_types": [\n            "Functional Training",\n            "Golf",\n            "Yoga",\n            "Running",\n            "Rowing",\n            "Walking",\n            "Cycling",\n            "Swimming",\n            "HIIT",\n            "Strength Training"\n        ]\n    }\n\n\n@router.get("/tools/get_workouts")\nasync def mcp_get_workouts(days: int = 7, workout_type: str = None):\n    """MCP tool: Get workouts"""\n    if workout_type:\n        workouts = workout_storage.get_by_type(workout_type)\n    else:\n        workouts = workout_storage.get_recent(days)\n    \n    return {\n        "result": {\n            "workouts": workouts,\n            "count": len(workouts),\n            "days": days,\n            "filter": workout_type\n        }\n    }\n\n\n@router.get("/tools/get_todays_workouts")\nasync def mcp_get_todays_workouts():\n    """MCP tool: Get today's workouts"""\n    pacific = ZoneInfo(DEFAULT_TIMEZONE)\n    today = datetime.now(pacific).strftime("%Y-%m-%d")\n    workouts = workout_storage.get_today()\n    \n    return {\n        "result": {\n            "date": today,\n            "workouts": workouts,\n            "count": len(workouts),\n            "timezone": DEFAULT_TIMEZONE\n        }\n    }\n\n\n@router.get("/tools/get_workout_summary")\nasync def mcp_get_workout_summary(days: int = 7):\n    """MCP tool: Get workout summary"""\n    summary = workout_storage.get_summary(days)\n    \n    return {\n        "result": {\n            "summary": summary\n        }\n    }\n
+"""
+MCP Protocol Routes - Simtheory.ai Integration.
+
+Implements the MCP protocol for Simtheory.ai to query workout data.
+This is a simplified REST-based MCP implementation.
+"""
+
+from fastapi import APIRouter
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from .storage import workout_storage
+
+router = APIRouter()
+
+DEFAULT_TIMEZONE = "America/Los_Angeles"
+
+
+@router.get("")
+@router.get("/")
+async def mcp_root():
+    """
+    MCP service discovery endpoint.
+    Returns available tools/capabilities.
+    """
+    return {
+        "name": "healthkit-mcp",
+        "version": "1.0.0",
+        "description": "Apple HealthKit workout data from Timothy's iPhone/Apple Watch",
+        "tools": [
+            {
+                "name": "get_workouts",
+                "description": "Get workouts from the last N days, optionally filtered by type",
+                "parameters": {
+                    "days": {"type": "integer", "default": 7},
+                    "workout_type": {"type": "string", "optional": True}
+                }
+            },
+            {
+                "name": "get_todays_workouts",
+                "description": "Get all workouts logged today (Pacific time)",
+                "parameters": {}
+            },
+            {
+                "name": "get_workout_summary",
+                "description": "Get workout statistics and summary for N days",
+                "parameters": {
+                    "days": {"type": "integer", "default": 7}
+                }
+            }
+        ],
+        "supported_workout_types": [
+            "Functional Training",
+            "Golf",
+            "Yoga",
+            "Running",
+            "Rowing",
+            "Walking",
+            "Cycling",
+            "Swimming",
+            "HIIT",
+            "Strength Training"
+        ]
+    }
+
+
+@router.get("/tools/get_workouts")
+async def mcp_get_workouts(days: int = 7, workout_type: str = None):
+    """MCP tool: Get workouts."""
+    if workout_type:
+        workouts = workout_storage.get_by_type(workout_type)
+    else:
+        workouts = workout_storage.get_recent(days)
+    
+    return {
+        "result": {
+            "workouts": workouts,
+            "count": len(workouts),
+            "days": days,
+            "filter": workout_type
+        }
+    }
+
+
+@router.get("/tools/get_todays_workouts")
+async def mcp_get_todays_workouts():
+    """MCP tool: Get today's workouts."""
+    pacific = ZoneInfo(DEFAULT_TIMEZONE)
+    today = datetime.now(pacific).strftime("%Y-%m-%d")
+    workouts = workout_storage.get_today()
+    
+    return {
+        "result": {
+            "date": today,
+            "workouts": workouts,
+            "count": len(workouts),
+            "timezone": DEFAULT_TIMEZONE
+        }
+    }
+
+
+@router.get("/tools/get_workout_summary")
+async def mcp_get_workout_summary(days: int = 7):
+    """MCP tool: Get workout summary."""
+    summary = workout_storage.get_summary(days)
+    
+    return {
+        "result": {
+            "summary": summary
+        }
+    }
