@@ -1,1 +1,48 @@
-"""\nHealthKit MCP - Apple HealthKit Workout Integration for Simtheory.ai\n\nThis service receives workout data from iOS Shortcuts and serves it via MCP protocol.\nCaptures: Functional Training, Golf, Yoga, Running, Rowing, Walking, and other workout types.\n\nArchitecture:\n1. iOS Shortcut reads HealthKit workouts\n2. Shortcut POSTs workout data to /ingest/workouts\n3. Data stored in memory (can be extended to database)\n4. MCP endpoints serve data to Simtheory.ai\n"""\n\nfrom fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\nimport os\nfrom datetime import datetime\n\n# Import routers\nfrom routes import ingest, data, mcp_protocol\n\napp = FastAPI(\n    title="HealthKit MCP",\n    description="Timothy's Apple HealthKit workout integration for Simtheory.ai",\n    version="1.0.0"\n)\n\n# CORS for Simtheory and testing\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=["*"],\n    allow_credentials=True,\n    allow_methods=["*"],\n    allow_headers=["*"],\n)\n\n# Include routers\napp.include_router(ingest.router, prefix="/ingest", tags=["Ingest"])\napp.include_router(data.router, prefix="/data", tags=["Data"])\napp.include_router(mcp_protocol.router, prefix="/mcp", tags=["MCP Protocol"])\n\n\n@app.get("/")\nasync def root():\n    """Health check and service info"""\n    return {\n        "service": "healthkit-mcp",\n        "version": "1.0.0",\n        "description": "Timothy's Apple HealthKit workout integration",\n        "status": "healthy",\n        "timestamp": datetime.utcnow().isoformat(),\n        "endpoints": {\n            "ingest": "/ingest/workouts (POST from iOS Shortcut)",\n            "data": "/data/workouts, /data/workouts/today, /data/workouts/summary",\n            "mcp": "/mcp (MCP Protocol for Simtheory.ai)"\n        },\n        "supported_workout_types": [\n            "Functional Training",\n            "Golf",\n            "Yoga",\n            "Running",\n            "Rowing",\n            "Walking",\n            "Cycling",\n            "Swimming",\n            "HIIT",\n            "Strength Training",\n            "Other"\n        ]\n    }\n\n\n@app.get("/health")\nasync def health():\n    """Simple health check for Railway"""\n    return {"status": "ok"}\n\n\nif __name__ == "__main__":\n    import uvicorn\n    port = int(os.getenv("PORT", 8000))\n    uvicorn.run(app, host="0.0.0.0", port=port)\n
+"""
+HealthKit MCP - Apple HealthKit Workout Integration
+"""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import os
+from datetime import datetime
+
+from src.routes import ingest, data, mcp_protocol
+
+app = FastAPI(
+    title="HealthKit MCP",
+    description="Apple HealthKit workout integration",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(ingest.router, prefix="/ingest", tags=["Ingest"])
+app.include_router(data.router, prefix="/data", tags=["Data"])
+app.include_router(mcp_protocol.router, prefix="/mcp", tags=["MCP Protocol"])
+
+
+@app.get("/")
+async def root():
+    return {
+        "service": "healthkit-mcp",
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
